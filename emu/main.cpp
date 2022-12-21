@@ -1,47 +1,49 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 
-#define MAX_MEM         (1024 * 1024 * 32)
-#define PC_START        0x00001000
-#define DATA_START      0x00100000
-#define STACK_START     MAX_MEM
+#define ROM_OFFSET          0x1000
+#define ROM_SIZE            (16 * 1024 * 1024)
 
-#define OPCODE_OP_IMM   0b0010011
-#define OPCODE_OP       0b0110011
-#define OPCODE_LOAD     0b0000011
-#define OPCODE_STORE    0b0100011
-#define OPCODE_BRANCH   0b1100011
-#define OPCODE_CUSTOM0  0b0001011
-#define OPCODE_LUI      0b0110111
-#define OPCODE_AUIPC    0b0010111
-#define OPCODE_JALR     0b1100111
-#define OPCODE_JAL      0b1101111
+#define RAM_OFFSET          0x10000000
+#define RAM_SIZE            (32 * 1024 * 1024)
 
-#define FUNCT3_ADD      0b000
-#define FUNCT3_SLL      0b001
-#define FUNCT3_SLT      0b010
-#define FUNCT3_SLTU     0b011
-#define FUNCT3_XOR      0b100
-#define FUNCT3_SRL      0b101
-#define FUNCT3_OR       0b110
-#define FUNCT3_AND      0b111
+#define OPCODE_OP_IMM       0b0010011
+#define OPCODE_OP           0b0110011
+#define OPCODE_LOAD         0b0000011
+#define OPCODE_STORE        0b0100011
+#define OPCODE_BRANCH       0b1100011
+#define OPCODE_CUSTOM0      0b0001011
+#define OPCODE_LUI          0b0110111
+#define OPCODE_AUIPC        0b0010111
+#define OPCODE_JALR         0b1100111
+#define OPCODE_JAL          0b1101111
 
-#define FUNCT3_LOAD_B   0b000
-#define FUNCT3_LOAD_H   0b001
-#define FUNCT3_LOAD_W   0b010
-#define FUNCT3_LOAD_BU  0b100
-#define FUNCT3_LOAD_HU  0b101
+#define FUNCT3_OP_ADD       0b000
+#define FUNCT3_OP_SLL       0b001
+#define FUNCT3_OP_SLT       0b010
+#define FUNCT3_OP_SLTU      0b011
+#define FUNCT3_OP_XOR       0b100
+#define FUNCT3_OP_SRL       0b101
+#define FUNCT3_OP_OR        0b110
+#define FUNCT3_OP_AND       0b111
 
-#define FUNCT3_STORE_B  0b000
-#define FUNCT3_STORE_H  0b001
-#define FUNCT3_STORE_W  0b010
+#define FUNCT3_LOAD_B       0b000
+#define FUNCT3_LOAD_H       0b001
+#define FUNCT3_LOAD_W       0b010
+#define FUNCT3_LOAD_BU      0b100
+#define FUNCT3_LOAD_HU      0b101
 
-#define FUNCT3_BRANCH_EQ      0b000
-#define FUNCT3_BRANCH_NE      0b001
-#define FUNCT3_BRANCH_LT      0b100
-#define FUNCT3_BRANCH_GE      0b101
-#define FUNCT3_BRANCH_LTU     0b110
-#define FUNCT3_BRANCH_GEU     0b111
+#define FUNCT3_STORE_B      0b000
+#define FUNCT3_STORE_H      0b001
+#define FUNCT3_STORE_W      0b010
+
+#define FUNCT3_BRANCH_EQ    0b000
+#define FUNCT3_BRANCH_NE    0b001
+#define FUNCT3_BRANCH_LT    0b100
+#define FUNCT3_BRANCH_GE    0b101
+#define FUNCT3_BRANCH_LTU   0b110
+#define FUNCT3_BRANCH_GEU   0b111
 
 #define FUNCT3_CUSTOM_ASSERT_EQ     0b000
 #define FUNCT3_CUSTOM_HLT           0b111
@@ -49,7 +51,10 @@
 struct State {
     int32_t reg[32];
     uint32_t pc;
-    uint8_t memory[MAX_MEM];
+
+    uint8_t rom[ROM_SIZE];
+    uint8_t ram[RAM_SIZE];
+
     uint64_t cycle;
 };
 
@@ -63,23 +68,23 @@ public:
     }
 
     void load_imm8u(uint32_t dst_reg, uint8_t value) {
-        i(OPCODE_OP_IMM, FUNCT3_ADD, dst_reg, 0, value);
+        i(OPCODE_OP_IMM, FUNCT3_OP_ADD, dst_reg, 0, value);
     }
 
     void load_imm32u(uint32_t dst_reg, uint32_t value) {
         // simple wrapper around ADDI and SLL
         // LUI and ADDI would be better, but we have this from early on here. Also LUI + ADDI has a caveat due to sign extension that we would have to handle
 
-        i(OPCODE_OP_IMM, FUNCT3_ADD, dst_reg, 0, (value >> 24) & 0xFF);
-        i(OPCODE_OP_IMM, FUNCT3_SLL, dst_reg, dst_reg, 8);
+        i(OPCODE_OP_IMM, FUNCT3_OP_ADD, dst_reg, 0, (value >> 24) & 0xFF);
+        i(OPCODE_OP_IMM, FUNCT3_OP_SLL, dst_reg, dst_reg, 8);
 
-        i(OPCODE_OP_IMM, FUNCT3_ADD, dst_reg, dst_reg, (value >> 16) & 0xFF);
-        i(OPCODE_OP_IMM, FUNCT3_SLL, dst_reg, dst_reg, 8);
+        i(OPCODE_OP_IMM, FUNCT3_OP_ADD, dst_reg, dst_reg, (value >> 16) & 0xFF);
+        i(OPCODE_OP_IMM, FUNCT3_OP_SLL, dst_reg, dst_reg, 8);
 
-        i(OPCODE_OP_IMM, FUNCT3_ADD, dst_reg, dst_reg, (value >> 8) & 0xFF);
-        i(OPCODE_OP_IMM, FUNCT3_SLL, dst_reg, dst_reg, 8);
+        i(OPCODE_OP_IMM, FUNCT3_OP_ADD, dst_reg, dst_reg, (value >> 8) & 0xFF);
+        i(OPCODE_OP_IMM, FUNCT3_OP_SLL, dst_reg, dst_reg, 8);
 
-        i(OPCODE_OP_IMM, FUNCT3_ADD, dst_reg, dst_reg, value & 0xFF);
+        i(OPCODE_OP_IMM, FUNCT3_OP_ADD, dst_reg, dst_reg, value & 0xFF);
     }
 
     // TODO all load and store: is offset signed or unsigned?
@@ -162,10 +167,16 @@ void init(State *state) {
         state->reg[i] = 0;
     }
 
-    state->pc = PC_START;
+    state->pc = ROM_OFFSET;
 
-    for(size_t i = 0; i < MAX_MEM; ++i) {
-        state->memory[i] = 0;
+    // init rom
+    for(size_t i = 0; i < ROM_SIZE; ++i) {
+        state->rom[i] = 0;
+    }
+
+    // init ram
+    for(size_t i = 0; i < RAM_SIZE; ++i) {
+        state->ram[i] = 0xAA; // in practice this is not initialized, so set it to something other than 0
     }
 
     state->cycle = 0;
@@ -173,40 +184,39 @@ void init(State *state) {
 
 
 void load_demo(State *state) {
-    uint32_t *instr_p = (uint32_t*)(state->memory);
+    uint32_t *instr_p = (uint32_t*)(state->rom);
+    uint32_t *data_p = (uint32_t*)(state->ram);
 
-    size_t idx = PC_START / 4;
-    size_t data_idx = DATA_START / 4;
+    size_t data_idx = 0;
 
-    MiniAssembler masm = MiniAssembler(instr_p + idx);
+    MiniAssembler masm = MiniAssembler(instr_p);
 
     // add
-    masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 16/*rd*/, 0/*rs*/, 0/*imm*/);                // x16 = 0
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_ADD, 16/*rd*/, 0/*rs*/, 0/*imm*/);                // x16 = 0
     for(size_t i = 0; i <= 10; i++) {
-        masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 16/*rd*/, 16/*rs*/, i/*imm*/);           // x16 = x16 + imm          --> x16 = 0x37
+        masm.i(OPCODE_OP_IMM, FUNCT3_OP_ADD, 16/*rd*/, 16/*rs*/, i/*imm*/);           // x16 = x16 + imm          --> x16 = 0x37
     }
 
     // add with negative number
-    masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 17/*rd*/, 0/*rs*/, -1/*imm*/);               // x17 = -1                 --> x17 = 0xFFFF_FFFF
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_ADD, 17/*rd*/, 0/*rs*/, -1/*imm*/);               // x17 = -1                 --> x17 = 0xFFFF_FFFF
 
     // bit shifting positive
-    masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 1/*rd*/, 0/*rs*/, 16/*imm*/);                // x1 = 16
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_ADD, 1/*rd*/, 0/*rs*/, 16/*imm*/);                // x1 = 16
 
-    masm.i(OPCODE_OP_IMM, FUNCT3_SRL, 18/*rd*/, 1/*rs*/, 2/*imm*/);                // x18 = x1 >> 2 (logical)  --> x19 = 0x04
-    masm.i(OPCODE_OP_IMM, FUNCT3_SRL, 19/*rd*/, 1/*rs*/, 2 | (1 << 10)/*imm*/);    // x19 = x1 >> 2 (arith.)   --> x20 = 0x04
-    masm.i(OPCODE_OP_IMM, FUNCT3_SLL, 20/*rd*/, 1/*rs*/, 2/*imm*/);                // x18 = x1 << 2            --> x18 = 0x40
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_SRL, 18/*rd*/, 1/*rs*/, 2/*imm*/);                // x18 = x1 >> 2 (logical)  --> x19 = 0x04
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_SRL, 19/*rd*/, 1/*rs*/, 2 | (1 << 10)/*imm*/);    // x19 = x1 >> 2 (arith.)   --> x20 = 0x04
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_SLL, 20/*rd*/, 1/*rs*/, 2/*imm*/);                // x18 = x1 << 2            --> x18 = 0x40
 
     // bit shifting negative
-    masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 1/*rd*/, 0/*rs*/, -16/*imm*/);               // x1 = -16
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_ADD, 1/*rd*/, 0/*rs*/, -16/*imm*/);               // x1 = -16
 
-    masm.i(OPCODE_OP_IMM, FUNCT3_SLL, 21/*rd*/, 1/*rs*/, 2/*imm*/);                // x21 = x1 << 2            --> x21 = 0xFFFF_FFC0 (-64)
-    masm.i(OPCODE_OP_IMM, FUNCT3_SRL, 22/*rd*/, 1/*rs*/, 2/*imm*/);                // x22 = x1 >> 2 (logical)  --> x22 = 0x3FFF_FFFC
-    masm.i(OPCODE_OP_IMM, FUNCT3_SRL, 23/*rd*/, 1/*rs*/, 2 | (1 << 10)/*imm*/);    // x13 = x1 >> 2 (arith.)   --> x23 = 0xFFFF_FFFC (-4)
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_SLL, 21/*rd*/, 1/*rs*/, 2/*imm*/);                // x21 = x1 << 2            --> x21 = 0xFFFF_FFC0 (-64)
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_SRL, 22/*rd*/, 1/*rs*/, 2/*imm*/);                // x22 = x1 >> 2 (logical)  --> x22 = 0x3FFF_FFFC
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_SRL, 23/*rd*/, 1/*rs*/, 2 | (1 << 10)/*imm*/);    // x23 = x1 >> 2 (arith.)   --> x23 = 0xFFFF_FFFC (-4)
 
     // load from memory
-    instr_p[data_idx++] = 0xF00DC0FF;
-    masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 2/*rd*/, 0/*rs*/, 1);                        // x2 = 1
-    masm.i(OPCODE_OP_IMM, FUNCT3_SLL, 2/*rd*/, 2/*rs*/, 20);                       // x2 = 1 << 20             --> x2 = 0x10000 (DATA_START), too large for immediate value
+    data_p[data_idx++] = 0xF00DC0FF;
+    masm.load_imm32u(2, RAM_OFFSET);                                                    // x2 = RAM_OFFSET
     masm.i(OPCODE_LOAD, FUNCT3_LOAD_W, 24/*rd*/, 2/*rs*/, 0);                      // x24 = load(x1)           --> x24 = 0xF00D_C0FF
     masm.i(OPCODE_LOAD, FUNCT3_LOAD_H, 25/*rd*/, 2/*rs*/, 0);                      // x25 = load(x1)           --> x25 = 0xFFFF_C0FF
     masm.i(OPCODE_LOAD, FUNCT3_LOAD_B, 26/*rd*/, 2/*rs*/, 0);                      // x26 = load(x1)           --> x26 = 0xFFFF_FFFF
@@ -214,8 +224,7 @@ void load_demo(State *state) {
     masm.i(OPCODE_LOAD, FUNCT3_LOAD_HU, 28/*rd*/, 2/*rs*/, 0);                     // x28 = load(x1)           --> x28 = 0x0000_C0FF
 
     // store to memory
-    // assumes x2 still points to DATA_START
-    masm.load_imm32u(2, DATA_START);                                               // x2 = $DATA_START
+    masm.load_imm32u(2, RAM_OFFSET);                                               // x2 = $RAM_OFFSET
     masm.load_imm32u(3, 0xDEADDEAD);                                               // x3 = 0xDEAD_DEAD
     masm.store_mem32(3, 2, 4);                                                     // *(x2 + 4) = *x3
     masm.store_mem32(3, 2, 8);                                                     // *(x2 + 8) = *x3
@@ -280,21 +289,31 @@ void load_demo(State *state) {
     masm.load_imm8u(3, 0);                                                          // accumulator
     masm.load_imm8u(4, 55);                                                         // expected value
 
-    masm.i(OPCODE_OP_IMM, FUNCT3_ADD, 1, 1, 1);                                     // x1 = x1 + 1
-    masm.r(OPCODE_OP, FUNCT3_ADD, 0, 3, 3, 1);                                      // x3 = x3 + x1
+    masm.i(OPCODE_OP_IMM, FUNCT3_OP_ADD, 1, 1, 1);                                  // x1 = x1 + 1
+    masm.r(OPCODE_OP, FUNCT3_OP_ADD, 0, 3, 3, 1);                                   // x3 = x3 + x1
     masm.b(FUNCT3_BRANCH_LTU, 1, 2, -8);
 
     masm.custom_assert_equal(3, 4);
-
-
 
     // last instruction: halt
     masm.custom_hlt();   
 }
 
 
+void* _get_pointer(State *state, uint32_t addr) {
+    if(addr >= ROM_OFFSET && addr < (ROM_OFFSET + ROM_SIZE)) {
+        return state->rom + addr - ROM_OFFSET;
+    } else if(addr >= RAM_OFFSET && addr < (RAM_OFFSET + RAM_SIZE)) {
+        return state->ram + addr - RAM_OFFSET;
+    } else {
+        printf("out of bounds memory access\n");
+        exit(1);
+    }
+}
+
+
 void step(State *state) {
-    uint32_t *instr_p = (uint32_t*)(state->memory) + (state->pc / 4);
+    uint32_t *instr_p = (uint32_t*)(_get_pointer(state, state->pc));
     uint32_t instr = *instr_p;
 
     // decode
@@ -378,17 +397,17 @@ void step(State *state) {
         case OPCODE_OP_IMM: {
             uint32_t result = 0;
             switch(funct3) {
-                case FUNCT3_ADD: {
+                case FUNCT3_OP_ADD: {
                     // add
                     result = data1 + data2; // TODO need to support flags
                     break;
                 }
-                case FUNCT3_SLL: {
+                case FUNCT3_OP_SLL: {
                     // shift left (logical, i.e. treat it as unsigned)
                     result = data1 << data2;
                     break;
                 }
-                case FUNCT3_SLT: {
+                case FUNCT3_OP_SLT: {
                     // shifts take only up to 32 bits
                     data2 = data2 & 0b11111;
 
@@ -400,7 +419,7 @@ void step(State *state) {
                     }
                     break;
                 }
-                case FUNCT3_SLTU: {
+                case FUNCT3_OP_SLTU: {
                     // set less than unsigned
                     if (data1 < data2) {
                         result = 1;
@@ -409,12 +428,12 @@ void step(State *state) {
                     }
                     break;
                 }
-                case FUNCT3_XOR: {
+                case FUNCT3_OP_XOR: {
                     // (bitwise) xor
                     result = data1 ^ data2;
                     break;
                 }
-                case FUNCT3_SRL: {
+                case FUNCT3_OP_SRL: {
                     // shifts take only up to 32 bits
                     data2 = data2 & 0b11111;
 
@@ -433,12 +452,12 @@ void step(State *state) {
                     }
                     break;
                 }
-                case FUNCT3_OR: {
+                case FUNCT3_OP_OR: {
                     // (bitwise) or
                     result = data1 | data2;
                     break;
                 }
-                case FUNCT3_AND: {
+                case FUNCT3_OP_AND: {
                     // (bitwise) and
                     result = data1 & data2;
                 }
@@ -457,12 +476,12 @@ void step(State *state) {
         case OPCODE_LOAD: {
             switch(funct3) {
                 case FUNCT3_LOAD_W: {
-                    uint32_t *p = (uint32_t*)(state->memory + data1 + data2);
+                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     state->reg[reg_dest] = *p;
                     break;
                 }
                 case FUNCT3_LOAD_H: {
-                    uint32_t *p = (uint32_t*)(state->memory + data1 + data2);
+                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     uint32_t sign = val & (1 << 15);
                     val = val & 0xFFFF;
@@ -473,7 +492,7 @@ void step(State *state) {
                     break;
                 }
                 case FUNCT3_LOAD_B: {
-                    uint32_t *p = (uint32_t*)(state->memory + data1 + data2);
+                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     uint32_t sign = val & (1 << 7);
                     val = val & 0xFF;
@@ -484,14 +503,14 @@ void step(State *state) {
                     break;
                 }
             case FUNCT3_LOAD_HU: {
-                    uint32_t *p = (uint32_t*)(state->memory + data1 + data2);
+                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     val = val & 0xFFFF;
                     state->reg[reg_dest] = val;
                     break;
                 }
             case FUNCT3_LOAD_BU: {
-                    uint32_t *p = (uint32_t*)(state->memory + data1 + data2);
+                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     val = val & 0xFF;
                     state->reg[reg_dest] = val;
@@ -504,17 +523,17 @@ void step(State *state) {
         {
             switch(funct3) {
                 case FUNCT3_STORE_W: {
-                    uint32_t *p = (uint32_t*)(state->memory + data1);
+                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1));
                     *p = data2;
                     break;
                 }
                 case FUNCT3_STORE_H: {
-                    uint16_t *p = (uint16_t*)(state->memory + data1);
+                    uint16_t *p = (uint16_t*)(_get_pointer(state, data1));
                     *p = (uint16_t)data2;
                     break;
                 }
                 case FUNCT3_STORE_B: {
-                    uint8_t *p = (uint8_t*)(state->memory + data1);
+                    uint8_t *p = (uint8_t*)(_get_pointer(state, data1));
                     *p = (uint8_t)data2;
                     break;
                 }
@@ -614,7 +633,7 @@ void step(State *state) {
 
 
 void print(State *state) {
-    printf("cycle %llu\n", state->cycle);
+    printf("cycle %lu\n", state->cycle);
     printf("registers\n");
     for(size_t i = 0; i < 8; ++i) {
         printf("    x%02lu = 0x%08x", 4 * i, state->reg[4 * i]);
@@ -623,14 +642,16 @@ void print(State *state) {
         printf("    x%02lu = 0x%08x\n", 4 * i + 3, state->reg[4 * i + 3]);
     }
     printf("program counter\n");
+    uint32_t* instr_p = (uint32_t*)(_get_pointer(state, state->pc));
     printf("    pc      0x%08x\n", state->pc);
-    printf("    instr   0x%08x\n", *((uint32_t*)(state->memory) + (state->pc / 4)));
-    printf("    opcode  0x%08x\n", (*((uint32_t*)(state->memory) + (state->pc / 4))) & 0x7F);
-    printf("memory at DATA_START\n");
+    printf("    instr   0x%08x\n", *instr_p);
+    printf("    opcode  0x%08x\n", (*instr_p) & 0x7F);
+
+    printf("memory\n");
     for(size_t i = 0; i < 8; ++i) {
         printf("    ");
         for(size_t j = 0; j < 8; ++j) {
-            uint32_t *mem = (uint32_t*)(state->memory + DATA_START) + i * 8 + j;
+            uint32_t *mem = (uint32_t*)(_get_pointer(state, RAM_OFFSET + i * 8 + j));
             printf("%08x ", *mem);
         }
         printf("\n");

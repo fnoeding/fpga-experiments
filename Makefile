@@ -7,10 +7,11 @@ RV32I_READELF := riscv64-unknown-elf-readelf
 # host toolchain
 
 CC := gcc -Wall
+CXX := g++ -Wall
 
 
 
-TARGETS := bin/life.rv32.elf bin/life.rv32.bin bin/life
+TARGETS := bin/life.rv32.elf bin/life.rv32.bin bin/life bin/rv32emu
 
 all: ${TARGETS}
 
@@ -26,15 +27,17 @@ bin/life.rv32.elf: programs/life.c
 	# ensure _start is actually at 0x1000'
 	${RV32I_READELF} -s $@ | grep '_start$$' | grep -q ' 00001000 '
 
+
 bin/life.rv32.bin: bin/life.rv32.elf
 	${RV32I_OBJCOPY} -O binary $< $@
-
 
 
 bin/life: programs/life.c
 	${CC} -o $@ $<
 
 
+bin/rv32emu: emu/main.cpp
+	${CXX} -O3 -o $@ $<
 
 
 .PHONY: clean
