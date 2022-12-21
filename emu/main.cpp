@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #define MAX_MEM         (1024 * 1024 * 32)
-#define PC_START        0x1000
+#define PC_START        0x00001000
 #define DATA_START      0x00100000
 #define STACK_START     MAX_MEM
 

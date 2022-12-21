@@ -11,6 +11,7 @@
 #ifndef FREESTANDING
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #endif
 
 
@@ -33,11 +34,11 @@
 
 
 // maps are actually (WIDTH + 2) * (HEIGHT + 2) so that we have a dead border at all times
-char *map0 = 0;
-char *map1 = 0;
+unsigned char *map0 = 0;
+unsigned char *map1 = 0;
 
 
-void step(char *a, char *b) {
+void step(unsigned char *a, unsigned char *b) {
     // init new map
     for(unsigned int i = 0; i < (WIDTH + 2) * (HEIGHT + 2); ++i) {
         b[i] = 0;
@@ -71,7 +72,7 @@ void step(char *a, char *b) {
     }
 }
 
-void init_map(char *map) {
+void init_map(unsigned char *map) {
     unsigned int idx = 0;
     for(unsigned int y = 0; y < HEIGHT + 2; ++y) {
         for(unsigned int x = 0; x < WIDTH + 2; ++x) {
@@ -155,7 +156,7 @@ void run() {
 
 #ifdef FREESTANDING
 
-void _start() {
+void __attribute__((section (".text.boot"))) _start() {
     run();
 }
 
