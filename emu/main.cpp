@@ -158,7 +158,37 @@ public:
 
         *instruction++ = instr;
     }
+
+    void jal(uint32_t rd, int32_t signed_offset) {
+        uint32_t offset = signed_offset;
+
+        uint32_t instr = OPCODE_JAL
+        | ((rd & 0x1F) << 7);
+
+        // offset[20] --> bits (32, 31]
+        instr |= ((offset >> 20) & 1) << 31;
+
+        // offset[10:1] --> bits (31, 21]
+        instr |= ((offset >> 1) & ((1 << 10) - 1)) << 21;
+        
+        // ofset[11] --> bits (21, 20]
+        instr |= ((offset >> 11) & 1) << 20;
+
+        // ofsset[19:12] --> bits (20, 12]
+        instr |= ((offset >> 12) & ((1 << 8) - 1)) << 12;
+
+        *instruction++ = instr;
+    }
+
+    void jalr(uint32_t rd, uint32_t rs, int32_t signed_offset) {
+        // I type encoding
+        i(OPCODE_JALR, 0/*funct3*/, rd, rs, signed_offset);
+    }
 };
+
+inline uint32_t _extract_bits(uint32_t data, uint32_t pos, uint32_t bits) {
+    return (data >> pos) & ((1 << bits) - 1);
+}
 
 
 
@@ -295,6 +325,16 @@ void load_demo(State *state) {
 
     masm.custom_assert_equal(3, 4);
 
+    // jumps
+    masm.load_imm8u(1, 0);
+    masm.load_imm8u(2, 21);
+    masm.jal(3, 12);                                                                // jump after the failing assertion
+    masm.custom_assert_equal(1, 2);                                                 // this would fail, but we skip it via the jump
+    masm.jal(0, 16);
+    masm.load_imm8u(1, 21);
+    masm.custom_assert_equal(1, 2);                                                 // this will pass
+    masm.jal(0, -16);
+
     // last instruction: halt
     masm.custom_hlt();   
 }
@@ -383,6 +423,24 @@ void step(State *state) {
             data1 = state->reg[rs1]; // a
             data2 = state->reg[rs2]; // b
             reg_dest = imm; // offset
+            break;
+        }
+        case OPCODE_JAL: {
+            uint32_t imm_32_20 = _extract_bits(instr, 31, 1);
+            if(imm_32_20) {
+                imm_32_20 = (0xFFFFFFFF ^ ((1 << 20) - 1)) >> 20;
+            }
+            uint32_t imm_20_12 = _extract_bits(instr, 12, 8);
+            uint32_t imm_12_11 = _extract_bits(instr, 20, 1);
+            uint32_t imm_11_1 = _extract_bits(instr, 21, 10);
+
+            reg_dest = _extract_bits(instr, 7, 5);
+            data1 = (imm_32_20 << 20)
+            | (imm_20_12 << 12)
+            | (imm_12_11 << 11)
+            | (imm_11_1 << 1);
+            data2 = 0;
+
             break;
         }
         default: {
@@ -477,7 +535,9 @@ void step(State *state) {
             switch(funct3) {
                 case FUNCT3_LOAD_W: {
                     uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
-                    state->reg[reg_dest] = *p;
+                    if(reg_dest != 0) {
+                        state->reg[reg_dest] = *p;
+                    }
                     break;
                 }
                 case FUNCT3_LOAD_H: {
@@ -488,7 +548,9 @@ void step(State *state) {
                     if(sign) {
                         val |= 0xFFFF0000;
                     }
-                    state->reg[reg_dest] = val;
+                    if(reg_dest != 0) {
+                        state->reg[reg_dest] = val;
+                    }
                     break;
                 }
                 case FUNCT3_LOAD_B: {
@@ -499,21 +561,27 @@ void step(State *state) {
                     if(sign) {
                         val |= 0xFFFFFF00;
                     }
-                    state->reg[reg_dest] = val;
+                    if(reg_dest != 0) {
+                        state->reg[reg_dest] = val;
+                    }
                     break;
                 }
             case FUNCT3_LOAD_HU: {
                     uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     val = val & 0xFFFF;
-                    state->reg[reg_dest] = val;
+                    if (reg_dest != 0) {
+                        state->reg[reg_dest] = val;
+                    }
                     break;
                 }
             case FUNCT3_LOAD_BU: {
                     uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     val = val & 0xFF;
-                    state->reg[reg_dest] = val;
+                    if (reg_dest != 0) {
+                        state->reg[reg_dest] = val;
+                    }
                     break;
                 }
             }
@@ -596,6 +664,14 @@ void step(State *state) {
             }
             break;
         }
+        case OPCODE_JAL: {
+            if(reg_dest != 0) {
+                state->reg[reg_dest] = state->pc;
+            }
+            branch_or_jump = true;
+            state->pc += data1; // TODO signed???
+            break;
+        }
         case OPCODE_CUSTOM0: {
             switch(funct3) {
                 case FUNCT3_CUSTOM_ASSERT_EQ: {
@@ -659,10 +735,6 @@ void print(State *state) {
     printf("---\n");
 }
 
-
-void test_add() {
-    
-}
 
 int main() {
     State *state = new State;
