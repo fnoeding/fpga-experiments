@@ -325,7 +325,7 @@ void load_demo(State *state) {
 
     masm.custom_assert_equal(3, 4);
 
-    // jumps
+    // jumps via JAL
     masm.load_imm8u(1, 0);
     masm.load_imm8u(2, 21);
     masm.jal(3, 12);                                                                // jump after the failing assertion
@@ -334,6 +334,17 @@ void load_demo(State *state) {
     masm.load_imm8u(1, 21);
     masm.custom_assert_equal(1, 2);                                                 // this will pass
     masm.jal(0, -16);
+
+    // jumps via JALR
+    masm.load_imm32u(3, -4);                                                        // random offset by -4 for all jumps
+    masm.load_imm8u(1, 0);
+    masm.load_imm8u(2, 21);
+    masm.jalr(4, 3, 16);                                                            // jump after the failing assertion
+    masm.custom_assert_equal(1, 2);                                                 // this would fail, but we skip it via the jump
+    masm.jalr(0, 3, 20);
+    masm.load_imm8u(1, 21);
+    masm.custom_assert_equal(1, 2);                                                 // this will pass
+    masm.jalr(0, 3, -12);
 
     // last instruction: halt
     masm.custom_hlt();   
@@ -440,6 +451,24 @@ void step(State *state) {
             | (imm_12_11 << 11)
             | (imm_11_1 << 1);
             data2 = 0;
+
+            break;
+        }
+        case OPCODE_JALR: {
+            uint32_t rs1 = _extract_bits(instr, 15, 5);
+            uint32_t rd = _extract_bits(instr, 7, 5);
+
+            uint32_t imm = _extract_bits(instr, 20, 12);
+            if(imm & (1 << 11)) {
+                imm |= 0xFFFFFFFF ^ ((1 << 12) - 1);
+            }
+
+            int32_t signed_imm = imm;
+            int32_t signed_reg = (int32_t)(state->reg[rs1]);
+            int32_t signed_offset = signed_imm + signed_reg;
+
+            data1 = signed_offset;
+            reg_dest = rd;
 
             break;
         }
@@ -666,10 +695,18 @@ void step(State *state) {
         }
         case OPCODE_JAL: {
             if(reg_dest != 0) {
-                state->reg[reg_dest] = state->pc;
+                state->reg[reg_dest] = state->pc + 4;
             }
             branch_or_jump = true;
             state->pc += data1; // TODO signed???
+            break;
+        }
+        case OPCODE_JALR: {
+            if(reg_dest != 0) {
+                state->reg[reg_dest] = state->pc + 4;
+            }
+            branch_or_jump = true;
+            state->pc += data1; // TODO signed?
             break;
         }
         case OPCODE_CUSTOM0: {
