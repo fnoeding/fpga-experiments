@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+
+from cffi import FFI
+from argparse import ArgumentParser
+from time import sleep
+
+
+class RV32Emu:
+    def __init__(self):
+        ffi = FFI()
+        self.ffi = ffi
+        ffi.cdef(
+            """
+            struct RV32EmuState;
+
+            struct RV32EmuState* rv32emu_init();
+            void rv32emu_free(struct RV32EmuState *state);
+            void rv32emu_set_rom(struct RV32EmuState *state, void *data, uint32_t size);
+            void rv32emu_read(struct RV32EmuState *state, uint32_t addr, uint32_t size, void *p);
+            void rv32emu_step(struct RV32EmuState *state);
+            void rv32emu_run(struct RV32EmuState *state, uint32_t *breakpoints, uint32_t num_breakpoints);
+            void rv32emu_print(struct RV32EmuState *state);
+        """
+        )
+
+        self.so = ffi.dlopen("bin/rv32emu.so")
+
+    def init(self):
+        return self.so.rv32emu_init()
+
+    def free(self, state):
+        self.so.rv32emu_free(state)
+
+    def print(self, state):
+        self.so.rv32emu_print(state)
+
+    def step(self, state):
+        self.so.rv32emu_step(state)
+
+    def run(self, state, breakpoints):
+        self.so.rv32emu_run(state, breakpoints, len(breakpoints))
+
+    def set_rom(self, state, bytes):
+        data_pointer = self.ffi.new("char[]", bytes)
+        self.so.rv32emu_set_rom(state, data_pointer, len(bytes))
+
+    def read(self, state, addr, size):
+        buf = self.ffi.new("char[]", size)
+        self.so.rv32emu_read(state, addr, size, buf)
+
+        return self.ffi.unpack(buf, size)  # WIP!!!
+
+
+def main():
+    parser = ArgumentParser()
+    parser.add_argument("--bin", required=True, help="path to machine code, i.e. the ROM contents. Will be loaded at 0x1000")
+
+    args = parser.parse_args()
+
+    emu = RV32Emu()
+    state = emu.init()
+    with open(args.bin, "rb") as f:
+        rom = f.read()
+        emu.set_rom(state, rom)
+
+    print("\033[2J")  # clear screen, go to top left corner
+
+    while True:
+        # FIXME workaround to only print the "LEDs" once per loop for life.c
+        breakpoints = [0x1550]
+        emu.run(state, breakpoints)
+        emu.step(state)  # execute the instruction at the breakpoint
+
+        leds_addr = 0x10000000 + 0x80000 + 0x80000
+        data = emu.read(state, leds_addr, 82 * 42)
+        l = []
+        # l.append("\033[2J")  # clear screen, go to top left corner
+        l.append("\033[0;0H")  # go to top left corner
+        for idx in range(82 * 42):
+            if idx > 0 and idx % 82 == 0:
+                l.append("\n")
+
+            if data[idx] == 0:
+                l.append("-")
+            else:
+                l.append("X")
+
+        print("".join(l))
+        emu.print(state)
+
+        sleep(1.0)
+
+    emu.free(state)
+
+
+if __name__ == "__main__":
+    main()

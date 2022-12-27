@@ -36,6 +36,7 @@
 // maps are actually (WIDTH + 2) * (HEIGHT + 2) so that we have a dead border at all times
 unsigned char *map0 = 0;
 unsigned char *map1 = 0;
+unsigned char *leds = 0;
 
 
 void step(unsigned char *a, unsigned char *b) {
@@ -113,8 +114,9 @@ void run() {
     unsigned int generation = 0;
 
     #ifdef FREESTANDING
-        map0 = (unsigned char*)0xf0000000;
+        map0 = (unsigned char*)0x10080000;
         map1 = map0 + 0x80000;
+        leds = map1 + 0x80000;
     #else
         map0 = (unsigned char*)malloc((WIDTH + 2) * (HEIGHT + 2));
         map1 = (unsigned char*)malloc((WIDTH + 2) * (HEIGHT + 2));
@@ -126,13 +128,17 @@ void run() {
         step(map0, map1);
         generation++;
 
-        #ifndef FREESTANDING
+        #ifdef FREESTANDING
+        for(unsigned int i = 0; i < (WIDTH + 2) * (HEIGHT + 2); ++i) {
+            leds[i] = map1[i];
+        }
+        #else
         printf("\033[2J"); // clear screen, go to 0,0
         for(unsigned int y = 1; y <= HEIGHT; y++) {
             for(unsigned int x = 1; x <= WIDTH; x++) {
                 unsigned int idx = y * (WIDTH + 2) + x;
 
-                if (map0[idx] != 0) {
+                if (map1[idx] != 0) {
                     putchar('X');
                 } else {
                     putchar('-');
@@ -141,8 +147,6 @@ void run() {
             putchar('\n');
         }
         printf("gen %d\n", generation);
-        //return;
-
 
         sleep(1);
         #endif

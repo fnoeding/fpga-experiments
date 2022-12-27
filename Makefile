@@ -11,8 +11,12 @@ CXX := g++ -Wall
 
 
 
-TARGETS := bin/life.rv32.elf bin/life.rv32.bin bin/life bin/rv32emu
+TARGETS := bin/life.rv32.elf bin/life.rv32.bin bin/life
 
+include */fragment.mk
+
+# fragments define goals first, so we need to make "all" the default one here
+.DEFAULT_GOAL := all
 all: ${TARGETS}
 
 
@@ -22,7 +26,7 @@ bin/life.rv32.elf: programs/life.c
 	@# instruct compiler to assume freestanding mode to warn about use of system headers
 	@# FREESTANDING is our own flag to enable this mode in the code
 	@# XXX might need to also include "-nostartfiles"
-	${RV32I_CC} -D FREESTANDING -o $@ $<
+	${RV32I_CC} -g -D FREESTANDING -o $@ $<
 
 	# ensure _start is actually at 0x1000'
 	${RV32I_READELF} -s $@ | grep '_start$$' | grep -q ' 00001000 '
@@ -34,10 +38,6 @@ bin/life.rv32.bin: bin/life.rv32.elf
 
 bin/life: programs/life.c
 	${CC} -o $@ $<
-
-
-bin/rv32emu: emu/main.cpp
-	${CXX} -O3 -o $@ $<
 
 
 .PHONY: clean
