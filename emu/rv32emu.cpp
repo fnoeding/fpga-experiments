@@ -511,7 +511,7 @@ int32_t rv32emu_step(RV32EmuState *state) {
             uint32_t funct7 = 0;
             if (opcode == OPCODE_OP) {
                 funct7 = _extract_bits(instr, 25, 7);
-                if(funct7 != 0) {
+                if(funct7 != 0 && funct3 != FUNCT3_OP_ADD) {
                     printf("support for funct7 is missing\n");
                     exit(1);
                 }
@@ -519,8 +519,12 @@ int32_t rv32emu_step(RV32EmuState *state) {
             uint32_t result = 0;
             switch(funct3) {
                 case FUNCT3_OP_ADD: {
-                    // add
-                    result = data1 + data2; // TODO need to support flags
+                    // add or sub
+                    if(funct7 == 0) {
+                        result = data1 + data2;
+                    } else if(funct7 == 0b0100000) {
+                        result = data1 - data2;
+                    }
                     break;
                 }
                 case FUNCT3_OP_SLL: {
