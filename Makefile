@@ -37,7 +37,7 @@ bin/life.rv32.bin: bin/life.rv32.elf
 
 
 bin/life: programs/life.c
-	${CC} -o $@ $<
+	${CC} -g -o $@ $<
 
 
 .PHONY: clean

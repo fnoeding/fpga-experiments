@@ -606,7 +606,7 @@ int32_t rv32emu_step(RV32EmuState *state) {
                     break;
                 }
                 case FUNCT3_LOAD_H: {
-                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
+                    uint16_t *p = (uint16_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     uint32_t sign = val & (1 << 15);
                     val = val & 0xFFFF;
@@ -619,7 +619,7 @@ int32_t rv32emu_step(RV32EmuState *state) {
                     break;
                 }
                 case FUNCT3_LOAD_B: {
-                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
+                    uint8_t *p = (uint8_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     uint32_t sign = val & (1 << 7);
                     val = val & 0xFF;
@@ -632,7 +632,7 @@ int32_t rv32emu_step(RV32EmuState *state) {
                     break;
                 }
             case FUNCT3_LOAD_HU: {
-                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
+                    uint16_t *p = (uint16_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     val = val & 0xFFFF;
                     if (reg_dest != 0) {
@@ -641,7 +641,7 @@ int32_t rv32emu_step(RV32EmuState *state) {
                     break;
                 }
             case FUNCT3_LOAD_BU: {
-                    uint32_t *p = (uint32_t*)(_get_pointer(state, data1 + data2));
+                    uint8_t *p = (uint8_t*)(_get_pointer(state, data1 + data2));
                     uint32_t val = *p;
                     val = val & 0xFF;
                     if (reg_dest != 0) {
@@ -796,31 +796,40 @@ int32_t rv32emu_step(RV32EmuState *state) {
 
 
 int32_t rv32emu_run(RV32EmuState *state, uint32_t *breakpoints, uint32_t num_breakpoints) {
-    while(true) {
+    const size_t max_cycles = 50000;
+
+    for(size_t i = 0; i < max_cycles; ++i) {
+        int32_t ret = rv32emu_step(state);
+        if(ret != RV32EMU_OK) {
+            return ret;
+        }
+
         // did we hit a breakpoint?
         for(uint32_t i = 0; i < num_breakpoints; ++i) {
             if(breakpoints[i] == state->pc) {
                 return RV32EMU_BREAKPOINT;
             }
         }
-
-        int32_t ret = rv32emu_step(state);
-        if(ret != RV32EMU_OK) {
-            return ret;
-        }
     }
+
+    return RV32EMU_OK;
 }
 
 
 void rv32emu_print(RV32EmuState *state) {
     printf("cycle %lu\n", state->cycle);
     printf("registers\n");
-    for(size_t i = 0; i < 8; ++i) {
-        printf("    x%02lu = 0x%08x", 4 * i, state->reg[4 * i]);
-        printf("    x%02lu = 0x%08x", 4 * i + 1, state->reg[4 * i + 1]);
-        printf("    x%02lu = 0x%08x", 4 * i + 2, state->reg[4 * i + 2]);
-        printf("    x%02lu = 0x%08x\n", 4 * i + 3, state->reg[4 * i + 3]);
-    }
+
+    int32_t *r = &(state->reg[0]);
+    printf("    zero %08x     t0 %08x    s0 %08x    s7  %08x    a0 %08x\n", r[0], r[5], r[8], r[23], r[10]);
+    printf("    ra   %08x     t1 %08x    s1 %08x    s8  %08x    a1 %08x\n", r[1], r[6], r[9], r[24], r[11]);
+    printf("    sp   %08x     t2 %08x    s2 %08x    s9  %08x    a2 %08x\n", r[2], r[7], r[18], r[25], r[12]);
+    printf("    gp   %08x     t3 %08x    s3 %08x    s10 %08x    a3 %08x\n", r[3], r[28], r[19], r[26], r[13]);
+    printf("    tp   %08x     t4 %08x    s4 %08x    s11 %08x    a4 %08x\n", r[4], r[29], r[20], r[27], r[14]);
+    printf("                      t5 %08x    s5 %08x                    a5 %08x\n",       r[30], r[21], r[15]);
+    printf("                      t6 %08x    s6 %08x                    a6 %08x\n",       r[31], r[22], r[16]);
+    printf("                                                                    a7 %08x\n",       r[17]);
+
     printf("program counter\n");
     uint32_t* instr_p = (uint32_t*)(_get_pointer(state, state->pc));
     printf("    pc      0x%08x\n", state->pc);
@@ -831,7 +840,7 @@ void rv32emu_print(RV32EmuState *state) {
     for(size_t i = 0; i < 8; ++i) {
         printf("    ");
         for(size_t j = 0; j < 8; ++j) {
-            uint32_t *mem = (uint32_t*)(_get_pointer(state, RV32EMU_RAM_OFFSET + i * 8 + j));
+            uint32_t *mem = (uint32_t*)(_get_pointer(state, RV32EMU_RAM_OFFSET + i * 8 * 4 + j * 4));
             printf("%08x ", *mem);
         }
         printf("\n");

@@ -34,12 +34,13 @@
 
 
 // maps are actually (WIDTH + 2) * (HEIGHT + 2) so that we have a dead border at all times
-unsigned char *map0 = 0;
-unsigned char *map1 = 0;
-unsigned char *leds = 0;
+unsigned char* map0;
+unsigned char* map1;
+unsigned char* leds;
+unsigned int generation;
 
 
-void step(unsigned char *a, unsigned char *b) {
+void step(unsigned char* a, unsigned char* b) {
     // init new map
     for(unsigned int i = 0; i < (WIDTH + 2) * (HEIGHT + 2); ++i) {
         b[i] = 0;
@@ -111,7 +112,7 @@ void init_map(unsigned char *map) {
 // without a standard library this is the entry point
 
 void run() {
-    unsigned int generation = 0;
+    generation = 0;
 
     #ifdef FREESTANDING
         map0 = (unsigned char*)0x10080000;
@@ -125,20 +126,18 @@ void run() {
     init_map(map0);
 
     while(1) {
-        step(map0, map1);
-        generation++;
-
         #ifdef FREESTANDING
         for(unsigned int i = 0; i < (WIDTH + 2) * (HEIGHT + 2); ++i) {
-            leds[i] = map1[i];
+                leds[i] = map0[i];
         }
+
         #else
         printf("\033[2J"); // clear screen, go to 0,0
         for(unsigned int y = 1; y <= HEIGHT; y++) {
             for(unsigned int x = 1; x <= WIDTH; x++) {
                 unsigned int idx = y * (WIDTH + 2) + x;
 
-                if (map1[idx] != 0) {
+                if (map0[idx] != 0) {
                     putchar('X');
                 } else {
                     putchar('-');
@@ -150,6 +149,9 @@ void run() {
 
         sleep(1);
         #endif
+
+        step(map0, map1);
+        generation++;
 
         unsigned char *p = map1;
         map1 = map0;
