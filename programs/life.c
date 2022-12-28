@@ -106,6 +106,37 @@ void init_map(unsigned char *map) {
     map[idx + DELTA_DOWN_RIGHT] = 1;
     map[idx + DELTA_MIDDLE_RIGHT] = 1;
     map[idx + DELTA_UP_RIGHT] = 1;
+
+    // pulsar
+    const char *pulsar = ""
+        "......................O...O.....\n"
+        "..OOO...OOO...........O...O.....\n"
+        "......................O...O.....\n"
+        "O....O.O....O........OO...OO....\n"
+        "O....O.O....O.......O.O...O.O...\n"
+        "O....O.O....O....OOOOO.....OOOOO\n"
+        "..OOO...OOO.....................\n"
+        "................................\n"
+        "..OOO...OOO.....................\n"
+        "O....O.O....O....OOOOO.....OOOOO\n"
+        "O....O.O....O.......O.O...O.O...\n"
+        "O....O.O....O........OO...OO....\n"
+        "......................O...O.....\n"
+        "..OOO...OOO...........O...O.....\n"
+        "......................O...O.....";
+    const char *p = pulsar;
+    idx = (WIDTH + 2) * 3 + 30;
+    while(*p != 0) {
+        if(*p == '.') {
+            map[idx++] = 0;
+        } else if (*p == 'O') {
+            map[idx++] = 1;
+        } else if (*p == '\n') {
+            idx += WIDTH + 2 - 32;
+        }
+
+        ++p;
+    }
 }
 
 
