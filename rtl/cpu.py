@@ -1,6 +1,6 @@
 import pytest
 
-from amaranth import Signal, Module, Elaboratable, ClockDomain, signed
+from amaranth import Signal, Module, Elaboratable, ClockDomain, signed, Mux
 from amaranth.build import Platform
 from amaranth.cli import main
 from amaranth.sim import Simulator, Settle, Tick
@@ -166,6 +166,71 @@ class InstructionDecoder(Elaboratable):
         return m
 
 
+class ProgramCounter(Elaboratable):
+    def __init__(self):
+        self.sync = ClockDomain("sync")
+        self.o_instruction_address = Signal(32, reset=0x1000)
+
+        self.ports = [self.o_instruction_address]
+
+    def elaborate(self, _: Platform) -> Module:
+        m = Module()
+
+        m.d.sync += self.o_instruction_address.eq(self.o_instruction_address + 4)
+
+        return m
+
+
+class CPU(Elaboratable):
+    def __init__(self):
+        self.sync = ClockDomain("sync")
+
+        self.alu = ALU()
+        self.decoder = InstructionDecoder()
+        self.pc = ProgramCounter()
+        self.registers = RegisterFile()
+
+        self.i_tmp_instruction = Signal(32)
+        self.o_tmp_pc = Signal(32)
+
+    def elaborate(self, _: Platform) -> Module:
+        m = Module()
+
+        m.submodules.alu = self.alu
+        m.submodules.decoder = self.decoder
+        m.submodules.registers = self.registers
+        m.submodules.pc = self.pc
+
+        r = self.registers
+        d = self.decoder
+        a = self.alu
+        p = self.pc
+        m.d.comb += [
+            # decoder to register file
+            r.i_select_rd.eq(d.o_rd),
+            r.i_select_rs1.eq(d.o_rs1),
+            r.i_select_rs2.eq(d.o_rs2),
+            r.i_we.eq(d.o_rd_we),
+            # decoder to alu
+            a.i_funct3.eq(d.o_funct3),
+            a.i_funct7.eq(d.o_funct7),
+            # register file to alu
+            a.i_data1.eq(r.o_rs1_value),
+            # register file / decoder to alu via mux
+            a.i_data2.eq(Mux(d.o_has_imm, d.o_imm, r.o_rs2_value)),
+            # alu to register file
+            r.i_data.eq(a.o_result),
+        ]
+
+        # temporary for testing
+        m.d.comb += [
+            d.i_instruction.eq(self.i_tmp_instruction),
+            self.o_tmp_pc.eq(p.o_instruction_address),
+        ]
+
+        return m
+
+
 def test_alu():
     dut = ALU()
     sim = Simulator(dut)
@@ -302,3 +367,42 @@ def test_instruction_decoder():
 
     sim.add_process(bench)
     sim.run()
+
+
+def test_cpu():
+    dut = CPU()
+    sim = Simulator(dut)
+
+    rom = [
+        # addi x1, x0, 42 --> x1 = 42
+        0x02A00093,
+        # add x2, x0, x1 --> x2 = x0 + x1 = 42
+        0x00100133,
+        # last entry - stop value
+        0,
+    ]
+
+    def bench():
+        assert (yield dut.o_tmp_pc) == 0x1000
+
+        while True:
+            instr_addr = yield dut.o_tmp_pc
+            rom_addr = (instr_addr - 0x1000) // 4
+
+            if rom[rom_addr] == 0:
+                break
+
+            yield dut.i_tmp_instruction.eq(rom[rom_addr])
+            yield Settle()
+
+            yield Tick()
+            yield Settle()
+
+            assert (yield dut.o_tmp_pc) == instr_addr + 4
+
+        assert (yield dut.registers.registers.word_select(1, 32)), 42
+
+    sim.add_clock(1e-6)
+    sim.add_process(bench)
+    with sim.write_vcd("dump.vcd", "dump.gtkw"):
+        sim.run()
