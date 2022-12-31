@@ -1,6 +1,6 @@
 import pytest
 
-from amaranth import Signal, Module, Elaboratable, ClockDomain, signed, Mux
+from amaranth import Signal, Module, Elaboratable, ClockDomain, signed, unsigned, Mux, Cat, Const, Repl
 from amaranth.build import Platform
 from amaranth.cli import main
 from amaranth.sim import Simulator, Settle, Tick
@@ -50,6 +50,7 @@ def SignedSignal(bits):
 
 class ALU(Elaboratable):
     def __init__(self):
+        self.i_is_branch = Signal(1)  # if set to 0, then normal ALU operation, otherwise treat funct3 as branch condition operator
         self.i_funct3 = Signal(3)
         self.i_funct7 = Signal(7)
         self.i_data1 = SignedSignal(32)
@@ -65,26 +66,44 @@ class ALU(Elaboratable):
 
         m = Module()
 
-        with m.Switch(self.i_funct3):
-            with m.Case(FUNCT3_OP_ADD):
-                m.d.comb += self.o_result.eq(self.i_data1 + self.i_data2)
-                # TODO need funct7 support
-            with m.Case(FUNCT3_OP_SLL):
-                shift_amount = self.i_data2[0:5]
-                m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() << shift_amount)
-            with m.Case(FUNCT3_OP_SLT):
-                m.d.comb += self.o_result.eq(self.i_data1 < self.i_data2)
-            with m.Case(FUNCT3_OP_SLTU):
-                m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() < self.i_data2.as_unsigned())
-            with m.Case(FUNCT3_OP_XOR):
-                m.d.comb += self.o_result.eq(self.i_data1 ^ self.i_data2)
-            with m.Case(FUNCT3_OP_SRL):
-                shift_amount = self.i_data2[0:5]
-                m.d.comb += self.o_result.eq(self.i_data1 >> shift_amount)
-            with m.Case(FUNCT3_OP_OR):
-                m.d.comb += self.o_result.eq(self.i_data1 | self.i_data2)
-            with m.Case(FUNCT3_OP_AND):
-                m.d.comb += self.o_result.eq(self.i_data1 & self.i_data2)
+        with m.If(self.i_is_branch == 0):
+            # normal ALU
+            with m.Switch(self.i_funct3):
+                with m.Case(FUNCT3_OP_ADD):
+                    m.d.comb += self.o_result.eq(self.i_data1 + self.i_data2)
+                    # TODO need funct7 support
+                with m.Case(FUNCT3_OP_SLL):
+                    shift_amount = self.i_data2[0:5]
+                    m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() << shift_amount)
+                with m.Case(FUNCT3_OP_SLT):
+                    m.d.comb += self.o_result.eq(self.i_data1 < self.i_data2)
+                with m.Case(FUNCT3_OP_SLTU):
+                    m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() < self.i_data2.as_unsigned())
+                with m.Case(FUNCT3_OP_XOR):
+                    m.d.comb += self.o_result.eq(self.i_data1 ^ self.i_data2)
+                with m.Case(FUNCT3_OP_SRL):
+                    # TODO need funct7 support
+                    shift_amount = self.i_data2[0:5]
+                    m.d.comb += self.o_result.eq(self.i_data1 >> shift_amount)
+                with m.Case(FUNCT3_OP_OR):
+                    m.d.comb += self.o_result.eq(self.i_data1 | self.i_data2)
+                with m.Case(FUNCT3_OP_AND):
+                    m.d.comb += self.o_result.eq(self.i_data1 & self.i_data2)
+        with m.Else():
+            # branch unit mode
+            with m.Switch(self.i_funct3):
+                with m.Case(FUNCT3_BRANCH_EQ):
+                    m.d.comb += self.o_result.eq(self.i_data1 == self.i_data2)
+                with m.Case(FUNCT3_BRANCH_NE):
+                    m.d.comb += self.o_result.eq(self.i_data1 != self.i_data2)
+                with m.Case(FUNCT3_BRANCH_LT):
+                    m.d.comb += self.o_result.eq(self.i_data1 < self.i_data2)
+                with m.Case(FUNCT3_BRANCH_LTU):
+                    m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() < self.i_data2.as_unsigned())
+                with m.Case(FUNCT3_BRANCH_GE):
+                    m.d.comb += self.o_result.eq(self.i_data1 >= self.i_data2)
+                with m.Case(FUNCT3_BRANCH_GEU):
+                    m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() >= self.i_data2.as_unsigned())
 
         return m
 
@@ -140,6 +159,7 @@ class InstructionDecoder(Elaboratable):
         self.o_invalid = Signal(1)
         self.o_imm = SignedSignal(32)
         self.o_has_imm = Signal(1)
+        self.o_is_branch = Signal(1)
 
         self.ports = []
         for x in dir(self):
@@ -150,6 +170,7 @@ class InstructionDecoder(Elaboratable):
         m = Module()
 
         m.d.comb += self.o_invalid.eq(0)
+        m.d.comb += self.o_is_branch.eq(0)
 
         opcode = self.i_instruction[0:7]
 
@@ -193,6 +214,27 @@ class InstructionDecoder(Elaboratable):
                     self.o_has_imm.eq(1),
                     self.o_funct7.eq(0),
                 ]
+            with m.Case(OPCODE_BRANCH):
+                # if condition: pc = pc + imm; else pc = pc + 4
+                # use ALU in branch mode
+                instr = self.i_instruction
+                imm_sign = instr[31]
+                imm_b11_l1 = instr[7]  # bit 11, length 1
+                imm_b1_l4 = instr[8:12]
+                imm_b5_l6 = instr[25:31]
+
+                m.d.comb += [
+                    self.o_rd.eq(0),
+                    self.o_rd_we.eq(0),
+                    self.o_rs1.eq(self.i_instruction[15:20]),
+                    self.o_rs2.eq(self.i_instruction[20:25]),
+                    self.o_imm.eq(Cat(Const(0, shape=unsigned(1)), imm_b1_l4, imm_b5_l6, imm_b11_l1, Repl(imm_sign, 20))),
+                    # though we have an immediate, the ALU must be told to operate on rs2, not imm
+                    self.o_has_imm.eq(0),
+                    self.o_funct7.eq(0),
+                    self.o_funct3.eq(self.i_instruction[12:15]),
+                    self.o_is_branch.eq(1),
+                ]
             with m.Default():
                 m.d.comb += self.o_invalid.eq(1)
 
@@ -202,6 +244,7 @@ class InstructionDecoder(Elaboratable):
 class ProgramCounter(Elaboratable):
     def __init__(self):
         self.sync = ClockDomain("sync")
+        self.i_offset = SignedSignal(32)
         self.o_instruction_address = Signal(32, reset=0x1000)
 
         self.ports = [self.o_instruction_address]
@@ -209,7 +252,7 @@ class ProgramCounter(Elaboratable):
     def elaborate(self, _: Platform) -> Module:
         m = Module()
 
-        m.d.sync += self.o_instruction_address.eq(self.o_instruction_address + 4)
+        m.d.sync += self.o_instruction_address.eq(self.o_instruction_address + self.i_offset)
 
         return m
 
@@ -247,6 +290,7 @@ class CPU(Elaboratable):
             # decoder to alu
             a.i_funct3.eq(d.o_funct3),
             a.i_funct7.eq(d.o_funct7),
+            a.i_is_branch.eq(d.o_is_branch),
             # register file to alu
             a.i_data1.eq(r.o_rs1_value),
             # register file / decoder to alu via mux
@@ -254,6 +298,12 @@ class CPU(Elaboratable):
             # alu to register file
             r.i_data.eq(a.o_result),
         ]
+
+        # branch logic: alu is in branch mode, returning 1 if branch should be taken
+        m.d.comb += p.i_offset.eq(4)
+        with m.If(d.o_is_branch):
+            with m.If(a.o_result == 1):
+                m.d.comb += p.i_offset.eq(d.o_imm)
 
         # temporary for testing
         m.d.comb += [
@@ -279,6 +329,8 @@ def test_alu():
         assert result == expected
 
     def bench():
+        yield dut.i_is_branch.eq(0)
+
         # ADD
         yield dut.i_funct3.eq(FUNCT3_OP_ADD)
         yield dut.i_funct7.eq(0)
@@ -313,6 +365,8 @@ def test_alu():
         yield from check(5, 0, 0)
         yield from check(2 ** 31 + 5, 2 ** 31 + 5, 0)
         yield from check(2 ** 31 + 4, 2 ** 31 + 5, 1)
+
+        # TODO additional tests, especially for branch conditions
 
     sim.add_process(bench)
     sim.run()
@@ -383,6 +437,7 @@ def test_instruction_decoder():
         assert (yield dut.o_invalid) == 0
         assert (yield dut.o_imm) == 42
         assert (yield dut.o_has_imm) == 1
+        assert (yield dut.o_is_branch) == 0
 
         # add x2, x0, x1
         yield dut.i_instruction.eq(0x00100133)
@@ -397,10 +452,12 @@ def test_instruction_decoder():
         assert (yield dut.o_invalid) == 0
         assert (yield dut.o_imm) == 0
         assert (yield dut.o_has_imm) == 0
+        assert (yield dut.o_is_branch) == 0
 
         # lui x3, 123451b7
         yield dut.i_instruction.eq(0x123451B7)
         yield Settle()
+
         assert (yield dut.o_rs1) == 0
         assert (yield dut.o_rs2) == 0
         assert (yield dut.o_rd) == 3
@@ -410,6 +467,39 @@ def test_instruction_decoder():
         assert (yield dut.o_invalid) == 0
         assert (yield dut.o_imm) == 0x12345000
         assert (yield dut.o_has_imm) == 1
+        assert (yield dut.o_is_branch) == 0
+
+        # beq x31, x30, -8
+        yield dut.i_instruction.eq(0xFFEF8CE3)
+        yield Settle()
+
+        print(hex((yield dut.i_instruction)))
+
+        assert (yield dut.o_rs1) == 31
+        assert (yield dut.o_rs2) == 30
+        assert (yield dut.o_rd) == 0
+        assert (yield dut.o_rd_we) == 0
+        assert (yield dut.o_funct3) == FUNCT3_BRANCH_EQ
+        assert (yield dut.o_funct7) == 0
+        assert (yield dut.o_invalid) == 0
+        assert (yield dut.o_imm) == -8
+        assert (yield dut.o_has_imm) == 0, "ALU must use rs2, not imm"
+        assert (yield dut.o_is_branch) == 1
+
+        # beq x1, x2, 8
+        yield dut.i_instruction.eq(0x00208463)
+        yield Settle()
+
+        assert (yield dut.o_rs1) == 1
+        assert (yield dut.o_rs2) == 2
+        assert (yield dut.o_rd) == 0
+        assert (yield dut.o_rd_we) == 0
+        assert (yield dut.o_funct3) == FUNCT3_BRANCH_EQ
+        assert (yield dut.o_funct7) == 0
+        assert (yield dut.o_invalid) == 0
+        assert (yield dut.o_imm) == 8
+        assert (yield dut.o_has_imm) == 0, "ALU must use rs2, not imm"
+        assert (yield dut.o_is_branch) == 1
 
     sim.add_process(bench)
     sim.run()
@@ -426,6 +516,10 @@ def test_cpu():
         0x00100133,
         # lui x3, 0x12345
         0x123451B7,
+        # beq x1, x2, 8
+        0x00208463,
+        # this instruction is skipped; addi x3 x0, 7 --> x3 = 7
+        0x00700193,
         # last entry - stop value
         0,
     ]
@@ -445,8 +539,6 @@ def test_cpu():
 
             yield Tick()
             yield Settle()
-
-            assert (yield dut.o_tmp_pc) == instr_addr + 4
 
         assert (yield dut.registers.registers.word_select(1, 32)), 42
         assert (yield dut.registers.registers.word_select(2, 32)), 42
