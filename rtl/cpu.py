@@ -17,7 +17,6 @@ OPCODE_AUIPC = 0b0010111
 OPCODE_JALR = 0b1100111
 OPCODE_JAL = 0b1101111
 
-
 FUNCT3_OP_ADD = 0b000
 FUNCT3_OP_SLL = 0b001
 FUNCT3_OP_SLT = 0b010
@@ -26,6 +25,23 @@ FUNCT3_OP_XOR = 0b100
 FUNCT3_OP_SRL = 0b101
 FUNCT3_OP_OR = 0b110
 FUNCT3_OP_AND = 0b111
+
+FUNCT3_LOAD_B = 0b000
+FUNCT3_LOAD_H = 0b001
+FUNCT3_LOAD_W = 0b010
+FUNCT3_LOAD_BU = 0b100
+FUNCT3_LOAD_HU = 0b101
+
+FUNCT3_STORE_B = 0b000
+FUNCT3_STORE_H = 0b001
+FUNCT3_STORE_W = 0b010
+
+FUNCT3_BRANCH_EQ = 0b000
+FUNCT3_BRANCH_NE = 0b001
+FUNCT3_BRANCH_LT = 0b100
+FUNCT3_BRANCH_GE = 0b101
+FUNCT3_BRANCH_LTU = 0b110
+FUNCT3_BRANCH_GEU = 0b111
 
 
 def SignedSignal(bits):
@@ -139,8 +155,10 @@ class InstructionDecoder(Elaboratable):
 
         with m.Switch(opcode):
             with m.Case(OPCODE_OP_IMM):
+                # rd = rs1 $OP imm
+                # use ALU with immediate
                 m.d.comb += [
-                    self.o_rd.eq(self.i_instruction[7:11]),
+                    self.o_rd.eq(self.i_instruction[7:12]),
                     self.o_rd_we.eq(1),
                     self.o_funct3.eq(self.i_instruction[12:15]),
                     self.o_rs1.eq(self.i_instruction[15:20]),
@@ -150,8 +168,10 @@ class InstructionDecoder(Elaboratable):
                     self.o_funct7.eq(0),
                 ]
             with m.Case(OPCODE_OP):
+                # rd = rs1 $OP rs2
+                # use ALU with second register
                 m.d.comb += [
-                    self.o_rd.eq(self.i_instruction[7:11]),
+                    self.o_rd.eq(self.i_instruction[7:12]),
                     self.o_rd_we.eq(1),
                     self.o_funct3.eq(self.i_instruction[12:15]),
                     self.o_rs1.eq(self.i_instruction[15:20]),
@@ -159,6 +179,19 @@ class InstructionDecoder(Elaboratable):
                     self.o_imm.eq(0),
                     self.o_has_imm.eq(0),
                     self.o_funct7.eq(self.i_instruction[25:32]),
+                ]
+            with m.Case(OPCODE_LUI):
+                # rd = immediate << 12
+                # use ALU to add x0 (zero) to immediate
+                m.d.comb += [
+                    self.o_rd.eq(self.i_instruction[7:12]),
+                    self.o_rd_we.eq(1),
+                    self.o_funct3.eq(FUNCT3_OP_ADD),
+                    self.o_rs1.eq(0),
+                    self.o_rs2.eq(0),
+                    self.o_imm.eq(self.i_instruction[12:32] << 12),
+                    self.o_has_imm.eq(1),
+                    self.o_funct7.eq(0),
                 ]
             with m.Default():
                 m.d.comb += self.o_invalid.eq(1)
@@ -365,6 +398,19 @@ def test_instruction_decoder():
         assert (yield dut.o_imm) == 0
         assert (yield dut.o_has_imm) == 0
 
+        # lui x3, 123451b7
+        yield dut.i_instruction.eq(0x123451B7)
+        yield Settle()
+        assert (yield dut.o_rs1) == 0
+        assert (yield dut.o_rs2) == 0
+        assert (yield dut.o_rd) == 3
+        assert (yield dut.o_rd_we) == 1
+        assert (yield dut.o_funct3) == FUNCT3_OP_ADD
+        assert (yield dut.o_funct7) == 0
+        assert (yield dut.o_invalid) == 0
+        assert (yield dut.o_imm) == 0x12345000
+        assert (yield dut.o_has_imm) == 1
+
     sim.add_process(bench)
     sim.run()
 
@@ -378,6 +424,8 @@ def test_cpu():
         0x02A00093,
         # add x2, x0, x1 --> x2 = x0 + x1 = 42
         0x00100133,
+        # lui x3, 0x12345
+        0x123451B7,
         # last entry - stop value
         0,
     ]
@@ -401,6 +449,8 @@ def test_cpu():
             assert (yield dut.o_tmp_pc) == instr_addr + 4
 
         assert (yield dut.registers.registers.word_select(1, 32)), 42
+        assert (yield dut.registers.registers.word_select(2, 32)), 42
+        assert (yield dut.registers.registers.word_select(3, 32)), 0x12345000
 
     sim.add_clock(1e-6)
     sim.add_process(bench)
