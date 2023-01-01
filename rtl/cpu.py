@@ -43,6 +43,8 @@ FUNCT3_BRANCH_GE = 0b101
 FUNCT3_BRANCH_LTU = 0b110
 FUNCT3_BRANCH_GEU = 0b111
 
+INTERNAL_FUNCT7_BRANCH_ALWAYS = 0b1
+
 
 def SignedSignal(bits):
     return Signal(shape=signed(bits))
@@ -91,19 +93,22 @@ class ALU(Elaboratable):
                     m.d.comb += self.o_result.eq(self.i_data1 & self.i_data2)
         with m.Else():
             # branch unit mode
-            with m.Switch(self.i_funct3):
-                with m.Case(FUNCT3_BRANCH_EQ):
-                    m.d.comb += self.o_result.eq(self.i_data1 == self.i_data2)
-                with m.Case(FUNCT3_BRANCH_NE):
-                    m.d.comb += self.o_result.eq(self.i_data1 != self.i_data2)
-                with m.Case(FUNCT3_BRANCH_LT):
-                    m.d.comb += self.o_result.eq(self.i_data1 < self.i_data2)
-                with m.Case(FUNCT3_BRANCH_LTU):
-                    m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() < self.i_data2.as_unsigned())
-                with m.Case(FUNCT3_BRANCH_GE):
-                    m.d.comb += self.o_result.eq(self.i_data1 >= self.i_data2)
-                with m.Case(FUNCT3_BRANCH_GEU):
-                    m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() >= self.i_data2.as_unsigned())
+            with m.If(self.i_funct7 == INTERNAL_FUNCT7_BRANCH_ALWAYS):
+                m.d.comb += self.o_result.eq(1)
+            with m.Else():
+                with m.Switch(self.i_funct3):
+                    with m.Case(FUNCT3_BRANCH_EQ):
+                        m.d.comb += self.o_result.eq(self.i_data1 == self.i_data2)
+                    with m.Case(FUNCT3_BRANCH_NE):
+                        m.d.comb += self.o_result.eq(self.i_data1 != self.i_data2)
+                    with m.Case(FUNCT3_BRANCH_LT):
+                        m.d.comb += self.o_result.eq(self.i_data1 < self.i_data2)
+                    with m.Case(FUNCT3_BRANCH_LTU):
+                        m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() < self.i_data2.as_unsigned())
+                    with m.Case(FUNCT3_BRANCH_GE):
+                        m.d.comb += self.o_result.eq(self.i_data1 >= self.i_data2)
+                    with m.Case(FUNCT3_BRANCH_GEU):
+                        m.d.comb += self.o_result.eq(self.i_data1.as_unsigned() >= self.i_data2.as_unsigned())
 
         return m
 
@@ -149,6 +154,7 @@ class RegisterFile(Elaboratable):
 class InstructionDecoder(Elaboratable):
     def __init__(self):
         self.i_instruction = Signal(32)
+        self.i_instruction_address = Signal(32)
 
         self.o_rs1 = Signal(5)
         self.o_rs2 = Signal(5)
@@ -235,6 +241,43 @@ class InstructionDecoder(Elaboratable):
                     self.o_funct3.eq(self.i_instruction[12:15]),
                     self.o_is_branch.eq(1),
                 ]
+            with m.Case(OPCODE_JAL):
+                # pc = pc + imm
+                # we re-use the ALU in branch mode, but force it to be always true
+                instr = self.i_instruction
+                imm_sign = instr[31]
+                imm_b1_l10 = instr[21:31]
+                imm_b11_l1 = instr[20]
+                imm_b12_l8 = instr[12:20]
+
+                m.d.comb += [
+                    self.o_rd.eq(self.i_instruction[7:12]),
+                    self.o_rd_we.eq(1),
+                    self.o_rs1.eq(0),
+                    self.o_rs2.eq(0),
+                    self.o_imm.eq(Cat(Const(0, shape=unsigned(1)), imm_b1_l10, imm_b11_l1, imm_b12_l8, Repl(imm_sign, 12))),
+                    self.o_has_imm.eq(0),
+                    self.o_funct7.eq(INTERNAL_FUNCT7_BRANCH_ALWAYS),
+                    self.o_funct3.eq(0),
+                    self.o_is_branch.eq(1),
+                ]
+            with m.Case(OPCODE_JALR):
+                # pc = rs1 + imm
+                # see OPCODE_JAL
+                # TODO decide how to connect rs1 to pc
+                #   1) add a now signal, that configures pc to use pc or rs1 as the base
+                #   2) add an input to decoder to take the current pc, and subtract it from imm. Then later on it can be re-added
+                m.d.comb += [
+                    self.o_rd.eq(self.i_instruction[7:12]),
+                    self.o_rd_we.eq(1),
+                    self.o_rs1.eq(self.i_instruction[15:20]),
+                    self.o_rs2.eq(0),
+                    self.o_imm.eq(self.i_instruction[20:32] - self.i_instruction_address),
+                    self.o_has_imm.eq(0),
+                    self.o_funct7.eq(INTERNAL_FUNCT7_BRANCH_ALWAYS),
+                    self.o_funct3.eq(0),
+                    self.o_is_branch.eq(1),
+                ]
             with m.Default():
                 m.d.comb += self.o_invalid.eq(1)
 
@@ -295,15 +338,23 @@ class CPU(Elaboratable):
             a.i_data1.eq(r.o_rs1_value),
             # register file / decoder to alu via mux
             a.i_data2.eq(Mux(d.o_has_imm, d.o_imm, r.o_rs2_value)),
-            # alu to register file
-            r.i_data.eq(a.o_result),
+            # alu and program counter to register file
+            # jal / jalr write return address, which is pc + 4
+            r.i_data.eq(Mux(d.o_is_branch, p.o_instruction_address + 4, a.o_result)),
+            # program counter to decoder (for JALR offset calculation)
+            d.i_instruction_address.eq(p.o_instruction_address),
         ]
 
         # branch logic: alu is in branch mode, returning 1 if branch should be taken
         m.d.comb += p.i_offset.eq(4)
         with m.If(d.o_is_branch):
             with m.If(a.o_result == 1):
-                m.d.comb += p.i_offset.eq(d.o_imm)
+                with m.If(d.o_funct7 == INTERNAL_FUNCT7_BRANCH_ALWAYS):
+                    # JAL / JALR case, only JALR has rs1 set to something != 0
+                    m.d.comb += p.i_offset.eq(d.o_imm + r.o_rs1_value)
+                with m.Else():
+                    # BEQ / BNEQ / ...
+                    m.d.comb += p.i_offset.eq(d.o_imm)
 
         # temporary for testing
         m.d.comb += [
@@ -501,6 +552,37 @@ def test_instruction_decoder():
         assert (yield dut.o_has_imm) == 0, "ALU must use rs2, not imm"
         assert (yield dut.o_is_branch) == 1
 
+        # jal x6, -8
+        yield dut.i_instruction.eq(0xFF9FF36F)
+        yield Settle()
+
+        assert (yield dut.o_rs1) == 0
+        assert (yield dut.o_rs2) == 0
+        assert (yield dut.o_rd) == 6
+        assert (yield dut.o_rd_we) == 1
+        assert (yield dut.o_funct3) == 0
+        assert (yield dut.o_funct7) == INTERNAL_FUNCT7_BRANCH_ALWAYS
+        assert (yield dut.o_invalid) == 0
+        assert (yield dut.o_imm) == -8
+        assert (yield dut.o_has_imm) == 0
+        assert (yield dut.o_is_branch) == 1
+
+        # jalr x8 x7 52
+        yield dut.i_instruction_address.eq(0x1000)
+        yield dut.i_instruction.eq(0x03438467)
+        yield Settle()
+
+        assert (yield dut.o_rs1) == 7
+        assert (yield dut.o_rs2) == 0
+        assert (yield dut.o_rd) == 8
+        assert (yield dut.o_rd_we) == 1
+        assert (yield dut.o_funct3) == 0
+        assert (yield dut.o_funct7) == INTERNAL_FUNCT7_BRANCH_ALWAYS
+        assert (yield dut.o_invalid) == 0
+        assert (yield dut.o_imm) == 52 - 0x1000  # imm is added to pc, so we have to subtract pc
+        assert (yield dut.o_has_imm) == 0
+        assert (yield dut.o_is_branch) == 1
+
     sim.add_process(bench)
     sim.run()
 
@@ -510,17 +592,19 @@ def test_cpu():
     sim = Simulator(dut)
 
     rom = [
-        # addi x1, x0, 42 --> x1 = 42
-        0x02A00093,
-        # add x2, x0, x1 --> x2 = x0 + x1 = 42
-        0x00100133,
-        # lui x3, 0x12345
-        0x123451B7,
-        # beq x1, x2, 8
-        0x00208463,
-        # this instruction is skipped; addi x3 x0, 7 --> x3 = 7
-        0x00700193,
-        # last entry - stop value
+        0x02A00093,  # addi x1 x0 42        --> x1 = 42
+        0x00100133,  # add x2 x0 x1         --> x2 = 42
+        0x123451B7,  # lui x3 0x12345       --> x3 = 0x12345
+        0x00208463,  # beq x1 x2 8          --> skip the next instruction
+        0x00700193,  # addi x3 x0 7         [skipped]
+        0x00424233,  # xor x4 x4 x4         --> x4 = 0
+        0x00A00293,  # addi x5 x0 10        --> x5 = 10
+        0x00120213,  # addi x4 x4 1         --> x4 = x4 + 1
+        0x00520463,  # beq x4 x5 8          --> skip the next instruction
+        0xFF9FF36F,  # jal x6 -8            --> jump up; effectively setting x4 = 10, also setting x6 = pc + 4
+        0x000013B7,  # lui x7 0x1           --> x7 = 0x1000
+        0x03438467,  # jalr x8 x7 52        --> skip the next instruction
+        0x00634333,  # xor x6 x6 x6         [skipped]
         0,
     ]
 
@@ -529,20 +613,36 @@ def test_cpu():
 
         while True:
             instr_addr = yield dut.o_tmp_pc
+            print("instr addr: ", hex(instr_addr))
             rom_addr = (instr_addr - 0x1000) // 4
+
+            # TODO
+            # need to make it so that JALR adds imm to rs1, not imm to pc
+            # TODO
 
             if rom[rom_addr] == 0:
                 break
 
+            print("instr: ", hex(rom[rom_addr]))
+
             yield dut.i_tmp_instruction.eq(rom[rom_addr])
             yield Settle()
+
+            assert (yield dut.decoder.o_invalid) == False
 
             yield Tick()
             yield Settle()
 
-        assert (yield dut.registers.registers.word_select(1, 32)), 42
-        assert (yield dut.registers.registers.word_select(2, 32)), 42
-        assert (yield dut.registers.registers.word_select(3, 32)), 0x12345000
+        read_reg = lambda x: dut.registers.registers.word_select(x, 32)
+
+        assert (yield read_reg(1)) == 42
+        assert (yield read_reg(2)) == 42
+        assert (yield read_reg(3)) == 0x12345000
+        assert (yield read_reg(5)) == 10
+        assert (yield read_reg(4)) == 10
+        assert (yield read_reg(6)) == 0x1000 + 4 * rom.index(0xFF9FF36F) + 4
+        assert (yield read_reg(7)) == 0x1000
+        assert (yield read_reg(8)) == 0x1000 + 4 * rom.index(0x03438467) + 4
 
     sim.add_clock(1e-6)
     sim.add_process(bench)
