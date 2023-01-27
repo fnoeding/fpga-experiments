@@ -1,6 +1,6 @@
 
 # risc v toolchain
-RV32I_CC := riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32e -nostdlib -ffreestanding -Tprograms/memory_map.ld
+RV32I_CC := riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -Tprograms/memory_map.ld
 RV32I_OBJCOPY := riscv64-unknown-elf-objcopy
 RV32I_READELF := riscv64-unknown-elf-readelf
 
